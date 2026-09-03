@@ -261,7 +261,7 @@ Deno.test("flips to ascending order on request", () => {
   }
 });
 
-Deno.test("sorts cache misses by full misses first, then partial+ttl combined", () => {
+Deno.test("sorts cache misses by their share of session cost, not the raw dollar amount", () => {
   const db = openArchiveDatabase(":memory:");
   migrateTestDatabase(db);
   const sources = new SourceArtifactRepository(db);
@@ -269,16 +269,17 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
   const conversations = new ConversationRepository(db);
   try {
     seedSortFixture(sources, projection);
-    const cacheSummaries = {
-      a: { fullMisses: 2, partialHits: 0, ttlRelatedMisses: 0 },
-      b: { fullMisses: 1, partialHits: 5, ttlRelatedMisses: 0 },
-      c: { fullMisses: 1, partialHits: 1, ttlRelatedMisses: 1 },
-    } satisfies Record<string, {
-      fullMisses: number;
-      partialHits: number;
-      ttlRelatedMisses: number;
-    }>;
-    for (const [id, cacheSummary] of Object.entries(cacheSummaries)) {
+    // a has the largest absolute miss cost ($5), but it's a small share of
+    // a's own (large) total spend. b has a much smaller absolute miss cost
+    // ($1) but it dominates b's (small) total spend. The ratio sort ranks
+    // b above a despite b costing less in raw dollars - the opposite of
+    // what sorting by inclusiveCacheMissCost directly would produce.
+    const sessions = {
+      a: { inclusiveComputedCost: 50, inclusiveCacheMissCost: 5 }, // 10%
+      b: { inclusiveComputedCost: 2, inclusiveCacheMissCost: 1 }, // 50%
+      c: { inclusiveComputedCost: 10, inclusiveCacheMissCost: 0.5 }, // 5%
+    };
+    for (const [id, fields] of Object.entries(sessions)) {
       // SAFETY: The static SQL projection and migrated schema define this row contract.
       const row = db.prepare(`
         SELECT cr.conversation_id, cr.summary_json
@@ -286,11 +287,7 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
         JOIN conversations c ON c.id = cr.conversation_id
         WHERE c.external_id = ?
       `).get(id) as { conversation_id: number; summary_json: string };
-      const summary = JSON.parse(row.summary_json);
-      summary.cacheSummary = {
-        ...summary.cacheSummary,
-        ...cacheSummary,
-      };
+      const summary = { ...JSON.parse(row.summary_json), ...fields };
       db.prepare(`
         UPDATE conversation_rollups SET summary_json = ?
         WHERE conversation_id = ?
@@ -302,9 +299,7 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
         key: "cacheMisses",
         direction: "desc",
       }).items.map(({ id }) => id),
-      // a has the most full misses; among the full=1 tie, b's larger
-      // partial+ttl combined key sorts before c's.
-      ["a", "b", "c"],
+      ["b", "a", "c"],
     );
   } finally {
     db.close();
