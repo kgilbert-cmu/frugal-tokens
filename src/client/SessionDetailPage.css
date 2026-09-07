@@ -1365,6 +1365,14 @@
   font: 10.5px var(--mono);
 }
 
+.sd-call-stats > .sd-cost-value {
+  min-width: 7ch;
+  flex-shrink: 0;
+  color: var(--sd-ink-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .sd-subagent-disclosure {
   margin-top: 10px;
   padding: 2px 7px 4px;

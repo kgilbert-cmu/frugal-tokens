@@ -1378,6 +1378,10 @@ function CallBlock({
           </div>
         )}
         <div className="sd-call-stats">
+          <CostIntegrityValue
+            reported={call.reportedCost}
+            computed={call.computedCost}
+          />
           <span>{compact.format(input)} context</span>
           <span>{compact.format(call.tokens.cacheRead)} cached</span>
           {reuse !== undefined && (
@@ -1387,10 +1391,6 @@ function CallBlock({
           {call.tokens.reasoning > 0 && (
             <span>{compact.format(call.tokens.reasoning)} reasoning</span>
           )}
-          <CostIntegrityValue
-            reported={call.reportedCost}
-            computed={call.computedCost}
-          />
         </div>
       </div>
     </section>
