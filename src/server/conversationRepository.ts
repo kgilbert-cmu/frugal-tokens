@@ -1112,7 +1112,11 @@ export class ConversationRepository {
   listUsageRollups(
     startedAt?: number,
     harness?: Harness,
+    options: {
+      recordTiming?: (name: string, duration: number) => void;
+    } = {},
   ): StoredUsageRollup[] {
+    const queryStartedAt = performance.now();
     // SAFETY: The static SQL projection and migrated schema define this row contract.
     const rows = this.db.prepare(`
       SELECT c.id, COALESCE(c.started_at, c.updated_at) AS session_started_at,
@@ -1145,7 +1149,9 @@ export class ConversationRepository {
       subagent_model_calls: number;
       overview_json: string;
     }>;
-    return rows.map((row) => ({
+    const queryDuration = performance.now() - queryStartedAt;
+    const hydrateStartedAt = performance.now();
+    const rollups = rows.map((row) => ({
       rootSessionID: row.id,
       sessionStartedAt: row.session_started_at,
       directInput: row.direct_input,
@@ -1153,6 +1159,10 @@ export class ConversationRepository {
       subagentModelCalls: row.subagent_model_calls,
       overview: JSON.parse(row.overview_json),
     }));
+    const hydrateDuration = performance.now() - hydrateStartedAt;
+    options.recordTiming?.("usage-rollups-query", queryDuration);
+    options.recordTiming?.("usage-rollups-hydrate", hydrateDuration);
+    return rollups;
   }
 
   listSubagentUsage(
@@ -1183,7 +1193,9 @@ export class ConversationRepository {
         MAX(call.computed_cost IS NULL AND call.reported_cost IS NULL)
           AS has_unpriced_cost
       FROM tree
-      JOIN conversation_model_calls call
+      -- Keep descendants outside the call lookup so SQLite uses the existing
+      -- (conversation_id, ordinal) index instead of scanning every model call.
+      CROSS JOIN conversation_model_calls call
         ON call.conversation_id = tree.conversation_id
       JOIN conversations root ON root.id = tree.root_id
       JOIN sources so ON so.id = root.source_id

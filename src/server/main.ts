@@ -801,15 +801,26 @@ app.get("/api/usage", (context) => {
   const sourceDurations = new Map<string, number>();
   const sourceStartedAt = performance.now();
   const selectedHarness = harnessSelection(harness);
-  const rollups = readRepository.listUsageRollups(start, selectedHarness);
+  const rollupStartedAt = performance.now();
+  const rollups = readRepository.listUsageRollups(start, selectedHarness, {
+    recordTiming: (name, duration) => sourceDurations.set(name, duration),
+  });
+  sourceDurations.set("usage-rollups", performance.now() - rollupStartedAt);
+  const subagentStartedAt = performance.now();
   const subagentUsage = rollups.some((rollup) => rollup.subagentModelCalls > 0)
     ? readRepository.listSubagentUsage(start, selectedHarness)
     : [];
+  sourceDurations.set("subagent-usage", performance.now() - subagentStartedAt);
+  const initialInputStartedAt = performance.now();
   const initialInputSamples = readRepository.listInitialInputSamples(
     start,
     selectedHarness,
   );
-  sourceDurations.set("database", performance.now() - sourceStartedAt);
+  sourceDurations.set(
+    "initial-input",
+    performance.now() - initialInputStartedAt,
+  );
+  const databaseDuration = performance.now() - sourceStartedAt;
 
   const subagentCoverage = harness === "pi" || harness === "codex"
     ? "none"
@@ -826,25 +837,26 @@ app.get("/api/usage", (context) => {
   );
   const aggregationDuration = performance.now() - aggregationStartedAt;
   const totalDuration = performance.now() - requestStartedAt;
-  const sourceDuration = [...sourceDurations.values()].reduce(
-    (total, duration) => total + duration,
-    0,
-  );
   const sourceTimings = [...sourceDurations.entries()].map(
     ([name, duration]) => `${name}=${formatTiming(duration)}`,
   ).join(" ");
+  const serverTimings = [...sourceDurations.entries()].map(
+    ([name, duration]) => `${name};dur=${duration.toFixed(1)}`,
+  ).join(", ");
   context.header(
     "Server-Timing",
-    `sources;dur=${sourceDuration.toFixed(1)}, aggregate;dur=${
+    `sources;dur=${
+      databaseDuration.toFixed(1)
+    }, ${serverTimings}, aggregate;dur=${
       aggregationDuration.toFixed(1)
     }, total;dur=${totalDuration.toFixed(1)}`,
   );
   console.info(
     `[usage] harness=${harness} range=${rangeParam} roots=${aggregated.rootCount} subagentGroups=${subagentUsage.length} days=${aggregated.dayCount} sources=${
-      formatTiming(sourceDuration)
-    } ${sourceTimings} aggregate=${formatTiming(aggregationDuration)} total=${
-      formatTiming(totalDuration)
-    }`,
+      formatTiming(databaseDuration)
+    } database=${formatTiming(databaseDuration)} ${sourceTimings} aggregate=${
+      formatTiming(aggregationDuration)
+    } total=${formatTiming(totalDuration)}`,
   );
   return context.json(aggregated.response);
 });
