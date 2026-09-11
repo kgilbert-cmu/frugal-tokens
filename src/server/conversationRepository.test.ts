@@ -211,9 +211,9 @@ const sortKeyExpectedDescOrder = {
   input: ["c", "b", "a"],
   output: ["c", "b", "a"],
   cost: ["c", "b", "a"],
-  // No cache issues are seeded here (see the dedicated heuristic test
-  // below), so every session ties at 0 and falls through to the
-  // updated_at DESC tiebreaker.
+  // No cache issues are seeded here (see the dedicated count test below),
+  // so every session ties at 0 and falls through to the updated_at DESC
+  // tiebreaker.
   cacheMisses: ["c", "b", "a"],
 } satisfies Record<SessionSortKey, string[]>;
 
@@ -261,7 +261,7 @@ Deno.test("flips to ascending order on request", () => {
   }
 });
 
-Deno.test("sorts cache misses by full misses first, then partial+ttl combined", () => {
+Deno.test("sorts cache misses by the same count the UI displays", () => {
   const db = openArchiveDatabase(":memory:");
   migrateTestDatabase(db);
   const sources = new SourceArtifactRepository(db);
@@ -269,16 +269,14 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
   const conversations = new ConversationRepository(db);
   try {
     seedSortFixture(sources, projection);
-    const cacheSummaries = {
-      a: { fullMisses: 2, partialHits: 0, ttlRelatedMisses: 0 },
-      b: { fullMisses: 1, partialHits: 5, ttlRelatedMisses: 0 },
-      c: { fullMisses: 1, partialHits: 1, ttlRelatedMisses: 1 },
-    } satisfies Record<string, {
-      fullMisses: number;
-      partialHits: number;
-      ttlRelatedMisses: number;
-    }>;
-    for (const [id, cacheSummary] of Object.entries(cacheSummaries)) {
+    // Counts only, deliberately not mirroring `sortFixtureValues`' a < b < c
+    // ordering, so this test can't pass by accident via some other key's
+    // tiebreaker. The UI badge is session.cacheIssues.length
+    // (RecentSessionsTable.tsx), a flat count across every issue cause -
+    // this seeds that same shape rather than the old fullMisses/partialHits
+    // breakdown so the sort can't drift from what's displayed again.
+    const issueCounts = { a: 1, b: 3, c: 0 };
+    for (const [id, count] of Object.entries(issueCounts)) {
       // SAFETY: The static SQL projection and migrated schema define this row contract.
       const row = db.prepare(`
         SELECT cr.conversation_id, cr.summary_json
@@ -287,10 +285,10 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
         WHERE c.external_id = ?
       `).get(id) as { conversation_id: number; summary_json: string };
       const summary = JSON.parse(row.summary_json);
-      summary.cacheSummary = {
-        ...summary.cacheSummary,
-        ...cacheSummary,
-      };
+      summary.cacheIssues = Array.from(
+        { length: count },
+        (_, index) => ({ status: "full-miss", turn: index + 1 }),
+      );
       db.prepare(`
         UPDATE conversation_rollups SET summary_json = ?
         WHERE conversation_id = ?
@@ -302,9 +300,42 @@ Deno.test("sorts cache misses by full misses first, then partial+ttl combined", 
         key: "cacheMisses",
         direction: "desc",
       }).items.map(({ id }) => id),
-      // a has the most full misses; among the full=1 tie, b's larger
-      // partial+ttl combined key sorts before c's.
-      ["a", "b", "c"],
+      ["b", "a", "c"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("sorts by name using effective title (generated title when present)", () => {
+  const db = openArchiveDatabase(":memory:");
+  migrateTestDatabase(db);
+  const sources = new SourceArtifactRepository(db);
+  const projection = new ConversationWriteRepository(db);
+  const conversations = new ConversationRepository(db);
+  try {
+    seedSortFixture(sources, projection);
+    // Update session "a" to have a generated_title that sorts after "Charlie"
+    // SAFETY: The static SQL projection and migrated schema define this row contract.
+    const row = db.prepare(`
+      SELECT cb.source_session_id
+      FROM conversation_branches cb
+      JOIN conversations c ON c.id = cb.conversation_id
+      WHERE c.external_id = ?
+      LIMIT 1
+    `).get("a") as { source_session_id: number };
+    db.prepare(`
+      UPDATE source_sessions
+      SET generated_title = ?
+      WHERE id = ?
+    `).run("Zzz Override", row.source_session_id);
+    // Sort by name ascending: should be b ("Bravo"), c ("Charlie"), a ("Zzz Override")
+    deepStrictEqual(
+      conversations.listSessions(1, 10, "pi", undefined, {
+        key: "name",
+        direction: "asc",
+      }).items.map(({ id }) => id),
+      ["b", "c", "a"],
     );
   } finally {
     db.close();
@@ -323,6 +354,31 @@ Deno.test("omitting sort reproduces the natural updated_at order", () => {
       conversations.listSessions(1, 10, "pi").items.map(({ id }) => id),
       ["c", "b", "a"],
     );
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("sorts by model with empty models_json array without crashing", () => {
+  const db = openArchiveDatabase(":memory:");
+  migrateTestDatabase(db);
+  const sources = new SourceArtifactRepository(db);
+  const projection = new ConversationWriteRepository(db);
+  const conversations = new ConversationRepository(db);
+  try {
+    seedSortFixture(sources, projection);
+    // SAFETY: The static SQL projection and migrated schema define this row contract.
+    db.prepare(`
+      UPDATE conversations SET models_json = '[]' WHERE id = (
+        SELECT id FROM conversations WHERE external_id = ?
+      )
+    `).run("a");
+    const result = conversations.listSessions(1, 10, "pi", undefined, {
+      key: "model",
+      direction: "desc",
+    });
+    strictEqual(result.items.length, 3);
+    deepStrictEqual(result.items.map(({ id }) => id), ["c", "b", "a"]);
   } finally {
     db.close();
   }

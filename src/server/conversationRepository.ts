@@ -1351,13 +1351,10 @@ export class ConversationRepository {
     }
     const direction = sort.direction === "asc" ? "ASC" : "DESC"; // allowlisted, not interpolated raw
     const keys = {
-      name: `c.title COLLATE NOCASE ${direction}`,
+      name: `${effectiveConversationTitle} COLLATE NOCASE ${direction}`,
       model: `COALESCE(
         json_extract(cr.summary_json, '$.displayModel'),
-        REPLACE(
-          json_extract(c.models_json, '$[' || (json_array_length(c.models_json) - 1) || ']'),
-          '-', ' '
-        )
+        REPLACE(json_extract(c.models_json, '$[#-1]'), '-', ' ')
       ) COLLATE NOCASE ${direction}`,
       activity:
         `COALESCE(json_extract(cr.summary_json, '$.inclusiveUserTurns'), cr.user_turns) ${direction}`,
@@ -1375,10 +1372,11 @@ export class ConversationRepository {
         json_extract(cr.summary_json, '$.inclusiveReportedCost'),
         cr.reported_cost
       ) ${direction}`,
+      // Matches what the UI actually shows (session.cacheIssues.length in
+      // RecentSessionsTable.tsx), rather than re-deriving a separate
+      // full-misses/partial-misses heuristic that can disagree with it.
       cacheMisses:
-        `COALESCE(json_extract(cr.summary_json, '$.cacheSummary.fullMisses'), 0) ${direction},
-        (COALESCE(json_extract(cr.summary_json, '$.cacheSummary.partialHits'), 0)
-          + COALESCE(json_extract(cr.summary_json, '$.cacheSummary.ttlRelatedMisses'), 0)) ${direction}`,
+        `COALESCE(json_array_length(cr.summary_json, '$.cacheIssues'), 0) ${direction}`,
     } satisfies Record<SessionSortKey, string>;
     return `ORDER BY ${
       keys[sort.key]
