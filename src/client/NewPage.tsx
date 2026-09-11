@@ -137,7 +137,9 @@ export function NewPage() {
     harness: string;
     data: TtlMissMetrics;
   }>();
-  const [highlightedSpendDates, setHighlightedSpendDates] = useState<string[]>();
+  const [highlightedSpendDates, setHighlightedSpendDates] = useState<
+    string[]
+  >();
   const screenshotRef = useRef<HTMLDivElement>(null);
   const pendingScrollYRef = useRef<number | undefined>(undefined);
   const refreshScrollYRef = useRef<number | undefined>(
