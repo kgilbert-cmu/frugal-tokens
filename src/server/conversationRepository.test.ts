@@ -679,6 +679,83 @@ Deno.test("session lists read cache issue reasons from normalized misses", () =>
   }
 });
 
+Deno.test("subagent usage preserves descendants, filters, pricing, and day grouping", () => {
+  const db = openArchiveDatabase(":memory:");
+  migrateTestDatabase(db);
+  const sources = new SourceArtifactRepository(db);
+  const projection = new ConversationWriteRepository(db);
+  const conversations = new ConversationRepository(db);
+  try {
+    const sourceID = sources.ensureSource(
+      "claude-code",
+      "directory",
+      "Claude Code",
+      "/sessions",
+    );
+    const sessions = ["root", "child", "grandchild", "unrelated"].map((id) => {
+      const session = linearSession(sourceID);
+      session.externalID = id;
+      session.publicID = id;
+      session.session.contextEvents = [];
+      sources.recordUnchangedArtifact(sourceID, id, `${id}.jsonl`, 10);
+      return session;
+    });
+    sessions[1].parentExternalID = "root";
+    sessions[2].parentExternalID = "child";
+    projection.replaceLinearConversationTree(sessions);
+    // Give the two real calls distinct local days and known pricing. Root and
+    // unrelated calls must never contribute, even when they share those days.
+    const firstDay = new Date(2026, 7, 10, 12).getTime();
+    const secondDay = new Date(2026, 7, 11, 12).getTime();
+    db.prepare(`
+      UPDATE conversation_model_calls
+      SET started_at = CASE source_call_id WHEN 'call-1' THEN ? ELSE ? END,
+        computed_cost = NULL, reported_cost = 2
+    `).run(firstDay, secondDay);
+    db.exec(`
+      UPDATE conversation_model_calls
+      SET source_call_id = 'context-operation:test'
+      WHERE conversation_id = (SELECT id FROM conversations WHERE external_id = 'child')
+        AND source_call_id = 'call-1';
+      UPDATE conversation_model_calls SET reported_cost = NULL
+      WHERE conversation_id = (SELECT id FROM conversations WHERE external_id = 'grandchild')
+        AND source_call_id = 'call-2';
+    `);
+    const rootID = Number(
+      db.prepare("SELECT id FROM conversations WHERE external_id = 'root'")
+        .get()!.id,
+    );
+    const all = conversations.listSubagentUsage();
+    strictEqual(all.length, 3);
+    strictEqual(all.every((row) => row.rootSessionID === rootID), true);
+    deepStrictEqual(
+      all.map((row) => ({
+        date: row.date,
+        input: row.input,
+        cost: row.cost,
+        hasUnpricedCost: row.hasUnpricedCost,
+      })),
+      [
+        { date: "2026-08-10", input: 17, cost: 2, hasUnpricedCost: false },
+        { date: "2026-08-11", input: 17, cost: 2, hasUnpricedCost: false },
+        { date: "2026-08-11", input: 17, cost: 0, hasUnpricedCost: true },
+      ],
+    );
+    deepStrictEqual(
+      conversations.listSubagentUsage(undefined, "claude-code"),
+      all,
+    );
+    deepStrictEqual(conversations.listSubagentUsage(undefined, "pi"), []);
+    deepStrictEqual(
+      conversations.listSubagentUsage(secondDay, "claude-code"),
+      all.filter((row) => row.date === "2026-08-11"),
+    );
+    deepStrictEqual(conversations.listSubagentUsage(secondDay + 1), []);
+  } finally {
+    db.close();
+  }
+});
+
 Deno.test("conversation repository keeps subagent launches separate from branches", () => {
   const db = openArchiveDatabase(":memory:");
   migrateTestDatabase(db);
@@ -746,11 +823,20 @@ Deno.test("conversation repository keeps subagent launches separate from branche
       conversations.listUsageCalls(undefined, "claude-code").length,
       4,
     );
-    strictEqual(
-      conversations.listUsageRollups(undefined, "claude-code")[0]
-        .subagentModelCalls,
-      2,
+    const rollups = conversations.listUsageRollups(undefined, "claude-code");
+    strictEqual(rollups[0].subagentModelCalls, 2);
+    const timings = new Map<string, number>();
+    deepStrictEqual(
+      conversations.listUsageRollups(undefined, "claude-code", {
+        recordTiming: (name, duration) => timings.set(name, duration),
+      }),
+      rollups,
     );
+    deepStrictEqual([...timings.keys()], [
+      "usage-rollups-query",
+      "usage-rollups-hydrate",
+    ]);
+    strictEqual([...timings.values()].every((duration) => duration >= 0), true);
     strictEqual(
       conversations.listSubagentUsage(undefined, "claude-code").length,
       1,

@@ -621,12 +621,7 @@ function ComparisonControls({
             onChange={(event) => cohort.updateModel(event.target.value)}
           >
             <option value="all">All models</option>
-            {cohort.models.toSorted((a, b) =>
-              b.localeCompare(a, undefined, {
-                numeric: true,
-                sensitivity: "base",
-              })
-            ).map((availableModel) => (
+            {cohort.models.map((availableModel) => (
               <option key={availableModel} value={availableModel}>
                 {displayModelName(availableModel)}
               </option>

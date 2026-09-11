@@ -27,11 +27,25 @@ const standard = {
     cacheRead: 1,
     output: 50,
   },
+  "claude-fable-5-1": {
+    input: 10,
+    cacheWrite5m: 12.5,
+    cacheWrite1h: 20,
+    cacheRead: 0.25,
+    output: 50,
+  },
   "claude-mythos-5": {
     input: 10,
     cacheWrite5m: 12.5,
     cacheWrite1h: 20,
     cacheRead: 1,
+    output: 50,
+  },
+  "claude-mythos-5-1": {
+    input: 10,
+    cacheWrite5m: 12.5,
+    cacheWrite1h: 20,
+    cacheRead: 0.25,
     output: 50,
   },
   "claude-opus-5": {
@@ -125,6 +139,16 @@ const standard = {
     cacheRead: 0.08,
     output: 4,
   },
+  "gemini-3.8-flash": {
+    input: 0.75,
+    cacheRead: 0.075,
+    output: 3.75,
+  },
+  "gemini-3.7-flash": {
+    input: 0.75,
+    cacheRead: 0.075,
+    output: 3.75,
+  },
   "grok-4-6": {
     input: 2,
     cacheWrite5m: 0,
@@ -187,6 +211,12 @@ const standard = {
     output: 2,
   },
   "muse-spark-1.2": { input: 1.25, cacheRead: 0.15, output: 4.25 },
+  "gpt-6-astra": {
+    input: 10,
+    cacheRead: 1,
+    cacheWrite: 12.5,
+    output: 50,
+  },
   "gpt-5.6-sol": {
     input: 5,
     cacheRead: 0.5,
@@ -225,6 +255,12 @@ const standard = {
 } satisfies ModelRateRegistry;
 
 const longContext = {
+  "gpt-6-astra": {
+    input: 20,
+    cacheRead: 2,
+    cacheWrite: 25,
+    output: 75,
+  },
   "gpt-5.3-codex": { input: 1.75, cacheRead: 0.175, output: 14 },
   "gpt-5.2-codex": { input: 1.75, cacheRead: 0.175, output: 14 },
   "gpt-5.1-codex-max": { input: 1.25, cacheRead: 0.125, output: 10 },
@@ -309,6 +345,19 @@ const reducedSolLongContextRates = {
   },
 } satisfies ModelRateRegistry;
 
+const geminiFutureRates = {
+  "gemini-3.8-flash": {
+    input: 1.5,
+    cacheRead: 0.15,
+    output: 7.5,
+  },
+  "gemini-3.7-flash": {
+    input: 1.5,
+    cacheRead: 0.15,
+    output: 7.5,
+  },
+} satisfies ModelRateRegistry;
+
 const reducedLunaTerraRates = {
   "gpt-5.6-terra": {
     input: 2,
@@ -342,10 +391,12 @@ const reducedLunaTerraLongContextRates = {
 const LONG_CONTEXT_THRESHOLD = 272_000;
 const GROK_LONG_CONTEXT_THRESHOLD = 200_000;
 const MINIMAX_M3_LONG_CONTEXT_THRESHOLD = 512_000;
+const GEMINI_PRICE_CUT = Date.parse("2027-01-01T00:00:00Z");
 const OPENAI_LUNA_TERRA_PRICE_CUT = Date.parse("2026-07-30T20:00:00Z");
 const OPENAI_SOL_PRICE_CUT = Date.parse("2026-08-21T21:00:00Z");
 
 export const counterfactualModelIDs = [
+  "gpt-6-astra",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -367,7 +418,9 @@ export const counterfactualModelIDs = [
   "gpt-5-mini",
   "gpt-5-nano",
   "claude-fable-5",
+  "claude-fable-5-1",
   "claude-mythos-5",
+  "claude-mythos-5-1",
   "claude-opus-5",
   "claude-opus-4-8",
   "claude-opus-4-7",
@@ -379,6 +432,8 @@ export const counterfactualModelIDs = [
   "claude-sonnet-4-5",
   "claude-haiku-4-5",
   "claude-haiku-3-5",
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
   "grok-4-6",
   "grok-4-5",
   "grok-build-0.1",
@@ -399,7 +454,7 @@ export const counterfactualModelIDs = [
 function usesLongContextRates(model: string, inputTokens: number) {
   if (
     (model.startsWith("gpt-5.") || model === "gpt-5" ||
-      model.startsWith("gpt-5-")) &&
+      model.startsWith("gpt-5-") || model.startsWith("gpt-6-")) &&
     inputTokens >= LONG_CONTEXT_THRESHOLD
   ) return true;
   if (model.startsWith("grok-") && inputTokens >= GROK_LONG_CONTEXT_THRESHOLD) {
@@ -428,6 +483,10 @@ export function modelRateCard(
     provider?.toLowerCase() === "cursor" ? cursorPricingModel(model) : model,
   );
   const long = usesLongContextRates(normalized, inputTokens);
+  if (timestamp >= GEMINI_PRICE_CUT) {
+    const futureRates = registeredRate(geminiFutureRates, normalized);
+    if (futureRates) return futureRates;
+  }
   if (timestamp >= OPENAI_SOL_PRICE_CUT) {
     const reducedRates = registeredRate(
       long ? reducedSolLongContextRates : reducedSolRates,

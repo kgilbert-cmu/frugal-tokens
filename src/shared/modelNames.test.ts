@@ -3,10 +3,13 @@ import { canonicalModelId, displayModelName } from "./modelNames.ts";
 Deno.test("formats known model IDs consistently", () => {
   const cases = {
     "claude-opus-5": "Claude Opus 5",
+    "claude-fable-5.1": "Claude Fable 5.1",
+    "claude-mythos-5-1": "Claude Mythos 5.1",
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-haiku-4-5": "Claude Haiku 4.5",
     "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
     "claude-haiku-4-5-20251201": "Claude Haiku 4.5",
+    "gpt-6-astra": "GPT 6 Astra",
     "gpt-5.6-terra": "GPT 5.6 Terra",
     "grok-4-5": "Grok 4.5",
     "grok-4-6": "Grok 4.6",
@@ -17,6 +20,8 @@ Deno.test("formats known model IDs consistently", () => {
     "minimax/minimax-m3": "MiniMax M3",
     "grok-build-0.1": "Grok Build 0.1",
     "muse-spark-1.2": "Muse Spark 1.2",
+    "gemini-3.8-flash": "Gemini 3.8 Flash",
+    "google/gemini-3.7-flash": "Gemini 3.7 Flash",
   };
 
   for (const [model, expected] of Object.entries(cases)) {
